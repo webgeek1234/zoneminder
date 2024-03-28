@@ -64,6 +64,8 @@ int VideoStream::SetupCodec(
     if (subpixelorder == ZM_SUBPIX_ORDER_BGR) {
       /* BGR subpixel order */
       pf = AV_PIX_FMT_BGR24;
+    } else if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
+      pf = AV_PIX_FMT_YUV420P;
     } else {
       /* Assume RGB subpixel order */
       pf = AV_PIX_FMT_RGB24;
@@ -79,6 +81,8 @@ int VideoStream::SetupCodec(
     } else if (subpixelorder == ZM_SUBPIX_ORDER_BGRA) {
       /* BGRA subpixel order */
       pf = AV_PIX_FMT_BGRA;
+    } else if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
+      pf = AV_PIX_FMT_YUV420P;
     } else {
       /* Assume RGBA subpixel order */
       pf = AV_PIX_FMT_RGBA;

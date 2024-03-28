@@ -1201,6 +1201,9 @@ bool Image::WriteJpeg(const std::string &filename,
       cinfo->in_color_space = JCS_EXT_XRGB;
     } else if (subpixelorder == ZM_SUBPIX_ORDER_ABGR) {
       cinfo->in_color_space = JCS_EXT_XBGR;
+    } else if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
+      cinfo->input_components = 3;
+      cinfo->in_color_space = JCS_YCbCr;
     } else {
       Warning("Unknown subpixelorder %d", subpixelorder);
       /* Assume RGBA */
@@ -1229,8 +1232,10 @@ bool Image::WriteJpeg(const std::string &filename,
       fclose(outfile);
       return false;
 #endif
+#ifdef JCS_EXTENSIONS
     } else if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
       cinfo->in_color_space = JCS_YCbCr;
+#endif
     } else {
       /* Assume RGB */
       /*
@@ -1248,6 +1253,16 @@ bool Image::WriteJpeg(const std::string &filename,
   jpeg_set_defaults(cinfo);
   jpeg_set_quality(cinfo, quality, FALSE);
   cinfo->dct_method = JDCT_FASTEST;
+
+  if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
+    cinfo->raw_data_in = TRUE;
+    cinfo->comp_info[0].h_samp_factor = 2;
+    cinfo->comp_info[0].v_samp_factor = 2;
+    cinfo->comp_info[1].h_samp_factor = 1;
+    cinfo->comp_info[1].v_samp_factor = 1;
+    cinfo->comp_info[2].h_samp_factor = 1;
+    cinfo->comp_info[2].v_samp_factor = 1;
+  }
 
   jpeg_start_compress(cinfo, TRUE);
   if (config.add_jpeg_comments && !annotation_.empty()) {
@@ -1287,20 +1302,34 @@ bool Image::WriteJpeg(const std::string &filename,
   }
 
   if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
-    std::vector<uint8_t> tmprowbuf(width * 3);
-    JSAMPROW row_pointer = &tmprowbuf[0];  /* pointer to a single row */
-    while (cinfo->next_scanline < cinfo->image_height) {
-      unsigned i, j;
-      unsigned offset = cinfo->next_scanline * cinfo->image_width * 2; //offset to the correct row
-      for (i = 0, j = 0; i < cinfo->image_width * 2; i += 4, j += 6) { //input strides by 4 bytes, output strides by 6 (2 pixels)
-        tmprowbuf[j + 0] = buffer[offset + i + 0]; // Y (unique to this pixel)
-        tmprowbuf[j + 1] = buffer[offset + i + 1]; // U (shared between pixels)
-        tmprowbuf[j + 2] = buffer[offset + i + 3]; // V (shared between pixels)
-        tmprowbuf[j + 3] = buffer[offset + i + 2]; // Y (unique to this pixel)
-        tmprowbuf[j + 4] = buffer[offset + i + 1]; // U (shared between pixels)
-        tmprowbuf[j + 5] = buffer[offset + i + 3]; // V (shared between pixels)
+    unsigned int line[3] = {
+      FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 0), 32),
+      FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 1), 32),
+      FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 2), 32)
+    };
+    JSAMPROW y[16], cb[16], cr[16];
+    JSAMPARRAY p[3] = {y, cr, cb};
+    uint8_t *data[3] = { buffer, buffer+line[0]*cinfo->image_height, buffer+line[0]*cinfo->image_height+line[1]*cinfo->image_height/2};
+    if (size < av_image_get_buffer_size(AV_PIX_FMT_YUV420P, width, height, 32)) {
+      Error("Image buffer too small for yuv420");
+      jpeg_abort_compress(cinfo);
+      fl.l_type = F_UNLCK;
+      fcntl(raw_fd, F_SETLK, &fl);
+      fclose(outfile);
+      return false;
+    }
+    for (unsigned int j = 0; j < cinfo->image_height; j += 16) {
+      for (unsigned int i = 0; i < 16; i++) {
+        y[i]    = data[0] + line[0]*(i+j);
+        cr[i/2] = data[1] + line[1]*((i+j)/2);
+        cb[i/2] = data[2] + line[2]*((i+j)/2);
       }
-      jpeg_write_scanlines(cinfo, &row_pointer, 1);
+      jpeg_write_raw_data(cinfo, p, 16);
+      if (cinfo->err->msg_code) {
+        Error("Jpeg write failed: %d", cinfo->err->msg_code);
+        jpeg_abort_compress(cinfo);
+        return false;
+      }
     }
   } else {
     JSAMPROW row_pointer = buffer;  /* pointer to a single row */
@@ -1476,6 +1505,9 @@ bool Image::EncodeJpeg(JOCTET *outbuffer, int *outbuffer_size, int quality_overr
       cinfo->in_color_space = JCS_EXT_XRGB;
     } else if ( subpixelorder == ZM_SUBPIX_ORDER_ABGR ) {
       cinfo->in_color_space = JCS_EXT_XBGR;
+    } else if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
+      cinfo->input_components = 3;
+      cinfo->in_color_space = JCS_YCbCr;
     } else {
       Warning("unknown subpixelorder %d", subpixelorder);
       /* Assume RGBA */
@@ -1498,6 +1530,10 @@ bool Image::EncodeJpeg(JOCTET *outbuffer, int *outbuffer_size, int quality_overr
       jpeg_abort_compress(cinfo);
       return false;
 #endif
+#ifdef JCS_EXTENSIONS
+    } else if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
+      cinfo->in_color_space = JCS_YCbCr;
+#endif
     } else {
       /* Assume RGB */
       /*
@@ -1516,12 +1552,51 @@ bool Image::EncodeJpeg(JOCTET *outbuffer, int *outbuffer_size, int quality_overr
   jpeg_set_quality(cinfo, quality, FALSE);
   cinfo->dct_method = JDCT_FASTEST;
 
+  if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
+    cinfo->raw_data_in = TRUE;
+    cinfo->comp_info[0].h_samp_factor = 2;
+    cinfo->comp_info[0].v_samp_factor = 2;
+    cinfo->comp_info[1].h_samp_factor = 1;
+    cinfo->comp_info[1].v_samp_factor = 1;
+    cinfo->comp_info[2].h_samp_factor = 1;
+    cinfo->comp_info[2].v_samp_factor = 1;
+  }
+
   jpeg_start_compress(cinfo, TRUE);
 
-  JSAMPROW row_pointer = buffer;
-  while ( cinfo->next_scanline < cinfo->image_height ) {
-    jpeg_write_scanlines(cinfo, &row_pointer, 1);
-    row_pointer += linesize;
+  if (subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
+    unsigned int line[3] = {
+      FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 0), 32),
+      FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 1), 32),
+      FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 2), 32)
+    };
+    JSAMPROW y[16], cb[16], cr[16];
+    JSAMPARRAY p[3] = {y, cr, cb};
+    uint8_t *data[3] = { buffer, buffer+line[0]*cinfo->image_height, buffer+line[0]*cinfo->image_height+line[1]*cinfo->image_height/2};
+    if (size < av_image_get_buffer_size(AV_PIX_FMT_YUV420P, width, height, 32)) {
+      Error("Image buffer too small for yuv420");
+      jpeg_abort_compress(cinfo);
+      return false;
+    }
+    for (unsigned int j = 0; j < cinfo->image_height; j += 16) {
+      for (unsigned int i = 0; i < 16; i++) {
+        y[i]    = data[0] + line[0]*(i+j);
+        cr[i/2] = data[1] + line[1]*((i+j)/2);
+        cb[i/2] = data[2] + line[2]*((i+j)/2);
+      }
+      jpeg_write_raw_data(cinfo, p, 16);
+      if (cinfo->err->msg_code) {
+        Error("Jpeg write failed: %d", cinfo->err->msg_code);
+        jpeg_abort_compress(cinfo);
+        return false;
+      }
+    }
+  } else {
+    JSAMPROW row_pointer = buffer;
+    while ( cinfo->next_scanline < cinfo->image_height ) {
+      jpeg_write_scanlines(cinfo, &row_pointer, 1);
+      row_pointer += linesize;
+    }
   }
 
   jpeg_finish_compress(cinfo);
@@ -5336,7 +5411,9 @@ __attribute__((noinline)) void std_deinterlace_4field_abgr(uint8_t* col1, uint8_
 }
 
 AVPixelFormat Image::AVPixFormat() const {
-  if ( colours == ZM_COLOUR_RGB32 ) {
+  if ( subpixelorder == ZM_SUBPIX_ORDER_YUV420P) {
+    return AV_PIX_FMT_YUV420P;
+  } else if ( colours == ZM_COLOUR_RGB32 ) {
     return AV_PIX_FMT_RGBA;
   } else if ( colours == ZM_COLOUR_RGB24 ) {
     if ( subpixelorder == ZM_SUBPIX_ORDER_BGR) {
