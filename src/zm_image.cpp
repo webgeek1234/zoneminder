@@ -1307,8 +1307,8 @@ bool Image::WriteJpeg(const std::string &filename,
       FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 1), 32),
       FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 2), 32)
     };
-    JSAMPROW y[16], cb[16], cr[16];
-    JSAMPARRAY p[3] = {y, cr, cb};
+    JSAMPROW y[16], cb[8], cr[8];
+    JSAMPARRAY p[3] = {y, cb, cr};
     uint8_t *data[3] = { buffer, buffer+line[0]*cinfo->image_height, buffer+line[0]*cinfo->image_height+line[1]*cinfo->image_height/2};
     if (size < av_image_get_buffer_size(AV_PIX_FMT_YUV420P, width, height, 32)) {
       Error("Image buffer too small for yuv420");
@@ -1318,11 +1318,11 @@ bool Image::WriteJpeg(const std::string &filename,
       fclose(outfile);
       return false;
     }
-    for (unsigned int j = 0; j < cinfo->image_height; j += 16) {
+    while (cinfo->next_scanline < cinfo->image_height) {
       for (unsigned int i = 0; i < 16; i++) {
-        y[i]    = data[0] + line[0]*(i+j);
-        cr[i/2] = data[1] + line[1]*((i+j)/2);
-        cb[i/2] = data[2] + line[2]*((i+j)/2);
+        y[i]    = data[0] + line[0]*(i+cinfo->next_scanline);
+        cb[i/2] = data[1] + line[1]*((i+cinfo->next_scanline)/2);
+        cr[i/2] = data[2] + line[2]*((i+cinfo->next_scanline)/2);
       }
       jpeg_write_raw_data(cinfo, p, 16);
       if (cinfo->err->msg_code) {
@@ -1570,19 +1570,19 @@ bool Image::EncodeJpeg(JOCTET *outbuffer, int *outbuffer_size, int quality_overr
       FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 1), 32),
       FFALIGN(av_image_get_linesize(AV_PIX_FMT_YUV420P, width, 2), 32)
     };
-    JSAMPROW y[16], cb[16], cr[16];
-    JSAMPARRAY p[3] = {y, cr, cb};
+    JSAMPROW y[16], cb[8], cr[8];
+    JSAMPARRAY p[3] = {y, cb, cr};
     uint8_t *data[3] = { buffer, buffer+line[0]*cinfo->image_height, buffer+line[0]*cinfo->image_height+line[1]*cinfo->image_height/2};
     if (size < av_image_get_buffer_size(AV_PIX_FMT_YUV420P, width, height, 32)) {
       Error("Image buffer too small for yuv420");
       jpeg_abort_compress(cinfo);
       return false;
     }
-    for (unsigned int j = 0; j < cinfo->image_height; j += 16) {
+    while (cinfo->next_scanline < cinfo->image_height) {
       for (unsigned int i = 0; i < 16; i++) {
-        y[i]    = data[0] + line[0]*(i+j);
-        cr[i/2] = data[1] + line[1]*((i+j)/2);
-        cb[i/2] = data[2] + line[2]*((i+j)/2);
+        y[i]    = data[0] + line[0]*(i+cinfo->next_scanline);
+        cb[i/2] = data[1] + line[1]*((i+cinfo->next_scanline)/2);
+        cr[i/2] = data[2] + line[2]*((i+cinfo->next_scanline)/2);
       }
       jpeg_write_raw_data(cinfo, p, 16);
       if (cinfo->err->msg_code) {
