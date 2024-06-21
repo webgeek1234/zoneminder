@@ -275,7 +275,7 @@ bool VideoStore::open() {
       for (unsigned int i = 0; i < sizeof(codec_data) / sizeof(*codec_data); i++) {
         chosen_codec_data = &codec_data[i];
         if (wanted_encoder != "" and wanted_encoder != "auto") {
-          if (wanted_encoder != codec_data[i].codec_name) {
+          if (wanted_encoder.compare(codec_data[i].codec_name) != 0) {
             Debug(1, "Not the right codec name %s != %s", codec_data[i].codec_name, wanted_encoder.c_str());
             continue;
           }
